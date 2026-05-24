@@ -107,6 +107,18 @@ class Trainer:
 
         # ── Data ──────────────────────────────────────────────────────────
         log.info(f"Loading dataset: {cfg['dataset_name']}")
+        tokenizer = None
+        if cfg["dataset_name"].lower() in {"wikitext", "c4"}:
+            tok_name = cfg.get("tokenizer_name")
+            if not tok_name:
+                raise ValueError(
+                    "For dataset_name in {'wikitext','c4'}, please set data.tokenizer_name in config.yaml"
+                )
+            try:
+                from transformers import AutoTokenizer
+            except ImportError as e:
+                raise ImportError("Please install transformers: pip install transformers") from e
+            tokenizer = AutoTokenizer.from_pretrained(tok_name)
         train_ds, val_ds = load_dataset_by_name(
             name=cfg["dataset_name"],
             vocab_size=cfg["vocab_size"],
@@ -114,6 +126,7 @@ class Trainer:
             train_size=cfg["train_size"],
             val_size=cfg["val_size"],
             seed=cfg.get("seed", 42),
+            tokenizer=tokenizer,
         )
         self.train_loader = build_dataloader(
             train_ds, cfg["batch_size"], shuffle=True,
@@ -335,7 +348,7 @@ def run_ablation(cfg: dict, ablation_name: str, ablation_flags: dict):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Heterogeneous Two-Stage MoE Training")
-    parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--resume", default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--run_ablations", action="store_true",
                         help="Run ablation experiments after main training")

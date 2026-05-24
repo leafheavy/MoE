@@ -34,10 +34,11 @@ training:
   lambda_entropy: 0.01     # weight for entropy minimization loss
   lambda_balance: 0.01     # weight for load balance loss
   # Mixed precision
-  use_amp: false           # set true if GPU available
+  use_amp: true           # set true if GPU available
 
 data:
   dataset_name: "synthetic" # "synthetic" | "wikitext" | "c4"
+  tokenizer_name: "gpt2"    # required when dataset_name is wikitext/c4
   max_length: 512
   train_size: 10000
   val_size: 1000
