@@ -1,0 +1,50 @@
+# ============================================================
+# Heterogeneous Two-Stage MoE — Experiment Configuration
+# ============================================================
+
+model:
+  vocab_size: 32000        # GPT-style vocabulary
+  d_model: 256             # hidden dimension (small for quick experiments)
+  n_heads: 4               # attention heads
+  n_layers: 4              # transformer blocks (MoE every other layer)
+  max_seq_len: 512
+  dropout: 0.1
+
+moe:
+  # Expert pools
+  n_stable: 4              # number of "stable" (small) experts
+  n_transfer: 4            # number of "transferable" (large) experts
+  d_ff_stable: 512         # FFN hidden dim for stable experts (2x d_model)
+  d_ff_transfer: 1024      # FFN hidden dim for transfer experts (4x d_model)
+  # Routing
+  top_k: 2                 # top-k experts per pool per token
+  noise_std: 0.01          # noise for exploration during training
+
+training:
+  seed: 42
+  batch_size: 16
+  max_steps: 5000
+  eval_every: 500
+  save_every: 1000
+  lr: 3.0e-4
+  warmup_steps: 200
+  weight_decay: 0.01
+  grad_clip: 1.0
+  # Loss weights
+  lambda_entropy: 0.01     # weight for entropy minimization loss
+  lambda_balance: 0.01     # weight for load balance loss
+  # Mixed precision
+  use_amp: false           # set true if GPU available
+
+data:
+  dataset_name: "synthetic" # "synthetic" | "wikitext" | "c4"
+  max_length: 512
+  train_size: 10000
+  val_size: 1000
+  num_workers: 2
+
+logging:
+  log_dir: "logs/"
+  use_wandb: false
+  project: "hetero-moe"
+  run_name: "two-stage-moe-exp1"
