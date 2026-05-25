@@ -30,6 +30,7 @@ from torch.utils.tensorboard import SummaryWriter
 sys.path.insert(0, str(Path(__file__).parent))
 
 from model import HeterogeneousMoEModel
+from hf_model import HFCausalLMWrapper
 from dataset import build_dataloader, load_dataset_by_name
 from utils import (
     compute_expert_stats,
@@ -86,20 +87,32 @@ class Trainer:
         set_seed(cfg.get("seed", 42))
 
         # ── Build model ───────────────────────────────────────────────────
-        self.model = HeterogeneousMoEModel(
-            vocab_size=cfg["vocab_size"],
-            d_model=cfg["d_model"],
-            n_heads=cfg["n_heads"],
-            n_layers=cfg["n_layers"],
-            max_seq_len=cfg["max_seq_len"],
-            n_stable=cfg["n_stable"],
-            n_transfer=cfg["n_transfer"],
-            d_ff_stable=cfg["d_ff_stable"],
-            d_ff_transfer=cfg["d_ff_transfer"],
-            top_k=cfg["top_k"],
-            dropout=cfg["dropout"],
-            noise_std=cfg["noise_std"],
-        ).to(self.device)
+        llm_backend = cfg.get("llm_backend", "custom_moe")
+        if llm_backend == "custom_moe":
+            self.model = HeterogeneousMoEModel(
+                vocab_size=cfg["vocab_size"],
+                d_model=cfg["d_model"],
+                n_heads=cfg["n_heads"],
+                n_layers=cfg["n_layers"],
+                max_seq_len=cfg["max_seq_len"],
+                n_stable=cfg["n_stable"],
+                n_transfer=cfg["n_transfer"],
+                d_ff_stable=cfg["d_ff_stable"],
+                d_ff_transfer=cfg["d_ff_transfer"],
+                top_k=cfg["top_k"],
+                dropout=cfg["dropout"],
+                noise_std=cfg["noise_std"],
+            ).to(self.device)
+        elif llm_backend in {"qwen", "llama"}:
+            model_name = cfg.get("pretrained_model_name")
+            if not model_name:
+                raise ValueError("Please set training.pretrained_model_name when llm_backend is qwen/llama")
+            self.model = HFCausalLMWrapper(model_name).to(self.device)
+            if cfg.get("tokenizer_name") in (None, "", "gpt2"):
+                cfg["tokenizer_name"] = model_name
+                log.info(f"Set tokenizer_name to pretrained_model_name: {model_name}")
+        else:
+            raise ValueError(f"Unknown llm_backend: {llm_backend}")
 
         param_counts = self.model.count_parameters()
         log.info(f"Model params — total: {param_counts['total']:,}  "
@@ -176,17 +189,25 @@ class Trainer:
             out = self.model(input_ids, labels=labels)
             loss_lm = out["loss_lm"]
 
-            # Auxiliary losses (entropy + load balance)
-            aux = compute_moe_loss(
-                out["router_outputs"],
-                lambda_entropy=self.cfg.get("lambda_entropy", 0.01),
-                lambda_balance=self.cfg.get("lambda_balance", 0.01),
-            )
-            # Ablation: skip entropy loss if requested
-            if self.ablation.get("no_entropy_loss", False):
-                total_loss = loss_lm + aux["loss_balance"] * self.cfg.get("lambda_balance", 0.01)
+            if out["router_outputs"]:
+                # Auxiliary losses (entropy + load balance)
+                aux = compute_moe_loss(
+                    out["router_outputs"],
+                    lambda_entropy=self.cfg.get("lambda_entropy", 0.01),
+                    lambda_balance=self.cfg.get("lambda_balance", 0.01),
+                )
+                # Ablation: skip entropy loss if requested
+                if self.ablation.get("no_entropy_loss", False):
+                    total_loss = loss_lm + aux["loss_balance"] * self.cfg.get("lambda_balance", 0.01)
+                else:
+                    total_loss = loss_lm + aux["loss_aux"]
             else:
-                total_loss = loss_lm + aux["loss_aux"]
+                aux = {
+                    "loss_entropy": torch.tensor(0.0, device=self.device),
+                    "loss_balance": torch.tensor(0.0, device=self.device),
+                    "loss_aux": torch.tensor(0.0, device=self.device),
+                }
+                total_loss = loss_lm
 
         self.optimizer.zero_grad()
         self.scaler.scale(total_loss).backward()
@@ -224,7 +245,7 @@ class Trainer:
             n_batches += 1
 
         mean_loss = total_loss / max(n_batches, 1)
-        stats = compute_expert_stats(all_router_outs)
+        stats = compute_expert_stats(all_router_outs) if all_router_outs else {}
         return {
             "val_loss": mean_loss,
             "val_ppl": perplexity(mean_loss),

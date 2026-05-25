@@ -181,3 +181,8 @@ tensorboard --logdir logs/
 - 使用了「Heterogeneous Two-Stage MoE」实现；
 - 给出你使用的 commit hash 与配置文件。
 
+## 10. 轻量化 LLM 扩展（Test-time MoE）
+
+该项目聚焦于 test-time 的 MoE inference，并希望扩展轻量 backbone 选择，可参考：
+
+- `LLM_OPTIONS.md`（包含 Qwen/Llama/Gemma/Phi 等候选组合与实验协议）。
